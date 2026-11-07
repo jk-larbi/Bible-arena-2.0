@@ -52,6 +52,7 @@ export const BaseGame: React.FC<BaseGameProps> = ({ gameId, gameName, onBack }) 
   const [versePicked, setVersePicked] = useState<number[]>([]);
   const [timelineOrder, setTimelineOrder] = useState<string[]>([]);
   const [wordSearchFound, setWordSearchFound] = useState<string[]>([]);
+  const [wordSearchSelection, setWordSearchSelection] = useState<{ row: number; col: number }[]>([]);
   const [crosswordAcross, setCrosswordAcross] = useState('');
   const [crosswordDown, setCrosswordDown] = useState('');
   const [matchSelectedLeft, setMatchSelectedLeft] = useState<string | null>(null);
@@ -87,6 +88,7 @@ export const BaseGame: React.FC<BaseGameProps> = ({ gameId, gameName, onBack }) 
     setScramblePicked([]);
     setVersePicked([]);
     setWordSearchFound([]);
+    setWordSearchSelection([]);
     setCrosswordAcross('');
     setCrosswordDown('');
     setMatchSelectedLeft(null);
@@ -456,60 +458,101 @@ export const BaseGame: React.FC<BaseGameProps> = ({ gameId, gameName, onBack }) 
       );
     }
 
-    // 4. BIBLE WORD SEARCH (Interactive word-finding grid)
+    // 4. BIBLE WORD SEARCH (Select adjacent letters to find each hidden word)
     if (gameId === 'bible-word-search') {
       const targetWords: string[] = currentChallenge.metadata?.words || currentChallenge.options;
+      const cleanWord = (value: string) => value.toUpperCase().replace(/[^A-Z]/g, '');
+      const words = targetWords.map(cleanWord).filter(Boolean);
+      const columns = Math.max(12, ...words.map((word) => word.length));
+      const grid = words.map((word, row) => {
+        const cells = Array.from({ length: columns }, (_, col) =>
+          'ABCDEFGHJKLMNPQRSTUVWXYZ'[(row * 11 + col * 7 + 3) % 24]
+        );
+        const start = (row * 3) % Math.max(1, columns - word.length + 1);
+        [...word].forEach((letter, offset) => { cells[start + offset] = letter; });
+        return cells;
+      });
+      const selectCell = (row: number, col: number) => {
+        if (reveal !== null) return;
+        const previous = wordSearchSelection[wordSearchSelection.length - 1];
+        if (previous && (previous.row !== row || Math.abs(previous.col - col) !== 1)) {
+          setWordSearchSelection([{ row, col }]);
+          return;
+        }
+        if (wordSearchSelection.some((cell) => cell.row === row && cell.col === col)) return;
+        const next = [...wordSearchSelection, { row, col }];
+        const candidate = next.map(({ row: r, col: c }) => grid[r][c]).join('');
+        const match = targetWords.find((word) => {
+          const normalized = cleanWord(word);
+          return !wordSearchFound.includes(word) &&
+            (candidate === normalized || candidate === [...normalized].reverse().join(''));
+        });
+        if (match) {
+          const found = [...wordSearchFound, match];
+          setWordSearchFound(found);
+          setWordSearchSelection([]);
+          if (found.length === targetWords.length) settleAnswer(targetWords.join(','));
+          return;
+        }
+        setWordSearchSelection(next);
+      };
       return (
         <div className="space-y-5">
           <div className="flex flex-wrap gap-2 justify-center">
-            {targetWords.map((w) => {
-              const found = wordSearchFound.includes(w);
+            {targetWords.map((word) => {
+              const found = wordSearchFound.includes(word);
               return (
-                <button
-                  key={w}
-                  disabled={reveal !== null || found}
-                  onClick={() => {
-                    const next = [...wordSearchFound, w];
-                    setWordSearchFound(next);
-                    if (next.length === targetWords.length) {
-                      settleAnswer(targetWords.join(','));
-                    }
-                  }}
-                  className={`px-4 py-2 rounded-xl font-mono text-sm font-bold border transition-all cursor-pointer ${
+                <span
+                  key={word}
+                  className={`px-3 py-2 rounded-xl font-mono text-sm font-bold border ${
                     found
                       ? 'bg-emerald-700 text-white border-emerald-700 line-through'
-                      : 'bg-[#F3EBDD] text-[#171B24] border-[#171B24]/20 hover:bg-[#3156C9] hover:text-white'
+                      : 'bg-[#F3EBDD] text-[#171B24] border-[#171B24]/20'
                   }`}
                 >
-                  {found ? `✓ ${w}` : `Locate: ${w}`}
-                </button>
+                  {found ? `✓ ${word}` : word}
+                </span>
               );
             })}
           </div>
-          <div className="bg-[#171B24] text-[#F3EBDD] p-4 rounded-2xl font-mono text-center tracking-widest text-sm sm:text-base space-y-1.5 select-none">
-            {targetWords.map((w, rIdx) => {
-              const pad = 'ABCDEFGHJKLMNPQRSTVWXYZ';
-              const rowStr = (
-                pad.slice(rIdx, rIdx + 2) +
-                w +
-                pad.slice(rIdx + 2, rIdx + 10)
-              ).slice(0, 10);
-              return (
-                <div key={rIdx} className="flex justify-center gap-2">
-                  {rowStr.split('').map((ch, cIdx) => (
-                    <span
-                      key={cIdx}
-                      className="w-7 h-7 rounded bg-white/10 flex items-center justify-center font-bold"
+          <div className="bg-[#171B24] text-[#F3EBDD] p-4 rounded-2xl font-mono text-center select-none overflow-x-auto">
+            <div className="inline-grid gap-1.5" style={{ gridTemplateColumns: `repeat(${columns}, minmax(1.8rem, 1fr))` }}>
+              {grid.flatMap((row, rowIdx) =>
+                row.map((letter, colIdx) => {
+                  const selected = wordSearchSelection.some((cell) => cell.row === rowIdx && cell.col === colIdx);
+                  return (
+                    <button
+                      key={`${rowIdx}-${colIdx}`}
+                      type="button"
+                      disabled={reveal !== null || wordSearchFound.length === targetWords.length}
+                      onClick={() => selectCell(rowIdx, colIdx)}
+                      aria-label={`Row ${rowIdx + 1}, column ${colIdx + 1}, ${letter}`}
+                      className={`w-7 h-8 sm:w-8 sm:h-9 rounded flex items-center justify-center font-bold text-sm transition-colors ${
+                        selected ? 'bg-[#D66B3D] text-white' : 'bg-white/10 hover:bg-white/25'
+                      }`}
                     >
-                      {ch}
-                    </span>
-                  ))}
-                </div>
-              );
-            })}
+                      {letter}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs text-[#5A6275]">
+              Select adjacent letters in a row, forwards or backwards, to find each word
+            </p>
+            <button
+              type="button"
+              disabled={wordSearchSelection.length === 0 || reveal !== null}
+              onClick={() => setWordSearchSelection([])}
+              className="shrink-0 px-3 py-2 rounded-lg border border-[#171B24]/20 text-xs font-semibold disabled:opacity-40"
+            >
+              Clear selection
+            </button>
           </div>
           <p className="text-xs text-center text-[#5A6275]">
-            Spot each hidden biblical word in the letter matrix above and tap its tag to mark it found.
+            {wordSearchFound.length} of {targetWords.length} words found
           </p>
         </div>
       );
